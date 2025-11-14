@@ -1,0 +1,65 @@
+def encrypt_rail_fence(text, key):
+    # Create an empty list for each rail
+    rail = ['' for _ in range(key)]
+    direction_down = False
+    row = 0
+
+    for char in text:
+        rail[row] += char
+        # Reverse direction when reaching top or bottom rail
+        if row == 0 or row == key - 1:
+            direction_down = not direction_down
+        row += 1 if direction_down else -1
+
+    # Combine all rails to get ciphertext
+    return ''.join(rail)
+
+
+def decrypt_rail_fence(cipher, key):
+    # Create the zigzag pattern with placeholders
+    pattern = [['\n' for _ in range(len(cipher))] for _ in range(key)]
+    direction_down = None
+    row, col = 0, 0
+
+    for _ in range(len(cipher)):
+        if row == 0:
+            direction_down = True
+        if row == key - 1:
+            direction_down = False
+        pattern[row][col] = '*'
+        col += 1
+        row += 1 if direction_down else -1
+
+    # Fill the placeholders with ciphertext
+    index = 0
+    for i in range(key):
+        for j in range(len(cipher)):
+            if pattern[i][j] == '*' and index < len(cipher):
+                pattern[i][j] = cipher[index]
+                index += 1
+
+    # Read the matrix in zigzag manner to get plaintext
+    result = []
+    row, col = 0, 0
+    for _ in range(len(cipher)):
+        if row == 0:
+            direction_down = True
+        if row == key - 1:
+            direction_down = False
+        result.append(pattern[row][col])
+        col += 1
+        row += 1 if direction_down else -1
+
+    return ''.join(result)
+
+
+# Main program
+if __name__ == "__main__":
+    text = input("Enter text: ").replace(" ", "")
+    key = int(input("Enter number of rails: "))
+
+    encrypted = encrypt_rail_fence(text, key)
+    print(f"\nEncrypted Text: {encrypted}")
+
+    decrypted = decrypt_rail_fence(encrypted, key)
+    print(f"Decrypted Text: {decrypted}")
