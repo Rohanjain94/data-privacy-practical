@@ -1,0 +1,23 @@
+import hashlib
+
+def hash_password(password):
+    """
+    Takes a password string and returns its SHA-256 hash in hexadecimal form.
+    """
+    # Encode the password to bytes, required by hashlib
+    encoded = password.encode()
+
+    # Create SHA-256 hash object
+    hash_object = hashlib.sha256(encoded)
+
+    # Convert to hexadecimal representation
+    hex_hash = hash_object.hexdigest()
+
+    return hex_hash
+
+
+# Main program
+if __name__ == "__main__":
+    password = input("Enter your password: ")
+    hashed = hash_password(password)
+    print(f"\nSHA-256 Hashed Password: {hashed}")
