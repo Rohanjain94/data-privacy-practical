@@ -1,0 +1,172 @@
+"""
+check_pwned_passwords.py
+
+Reads a CSV-like file (username,password per line, comma-separated),
+checks each password against the Have I Been Pwned Pwned Passwords API
+using the k-anonymity "range" endpoint, and prints/writes results.
+
+Requirements:
+    pip install requests
+
+Usage:
+    python check_pwned_passwords.py credentials.txt
+"""
+
+import hashlib
+import requests
+import time
+import sys
+import csv
+from pathlib import Path
+from typing import Tuple, Optional
+
+PWNED_RANGE_API = "https://api.pwnedpasswords.com/range/"
+
+# Configure polite defaults:
+USER_AGENT = "my-app-pwned-checker/1.0 (+https://example.com)"  # replace with your app id/url
+ADD_PADDING = True           # request padded responses (optional, helps privacy)
+REQUEST_DELAY = 1.6          # seconds between requests (tunable; avoid hammering the API)
+REQUEST_TIMEOUT = 10         # seconds for HTTP requests
+
+
+def sha1_hash_upper(s: str) -> str:
+    """Return SHA-1 hash (hex uppercase) of the input string."""
+    return hashlib.sha1(s.encode("utf-8")).hexdigest().upper()
+
+
+def query_pwned_range(prefix: str, session: requests.Session) -> str:
+    """
+    Query the pwnedpasswords range endpoint for a 5-char prefix and return raw text response.
+    Raises requests.HTTPError for non-200 responses (caller can handle).
+    """
+    url = PWNED_RANGE_API + prefix
+    headers = {"User-Agent": USER_AGENT}
+    if ADD_PADDING:
+        headers["Add-Padding"] = "true"
+    resp = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    return resp.text
+
+
+def count_hash_in_response(suffix: str, response_text: str) -> int:
+    """
+    Given the rest-of-hash suffix (39 hex chars) and the response body, return count (0 if not found).
+    Response lines are like: "A1B2C3D4E5F6...:1234"
+    """
+    # Normalize suffix to upper-case (response is uppercase)
+    suffix = suffix.upper()
+    for line in response_text.splitlines():
+        if not line:
+            continue
+        parts = line.split(":")
+        if len(parts) != 2:
+            continue
+        resp_suffix, count = parts[0].strip().upper(), parts[1].strip()
+        if resp_suffix == suffix:
+            try:
+                return int(count)
+            except ValueError:
+                return 0
+    return 0
+
+
+def check_password(password: str, session: requests.Session) -> int:
+    """
+    Returns the number of times `password` has been seen in breaches (0 if not found).
+    May raise requests.HTTPError on fatal HTTP errors; callers should handle and possibly retry.
+    """
+    full_hash = sha1_hash_upper(password)
+    prefix, suffix = full_hash[:5], full_hash[5:]
+    response_text = query_pwned_range(prefix, session)
+    return count_hash_in_response(suffix, response_text)
+
+
+def read_credentials_file(path: Path):
+    """
+    Generator that yields (username, password) pairs.
+    Accepts files with lines like: username,password
+    Skips empty lines and lines without a comma.
+    """
+    with path.open("r", encoding="utf-8") as fh:
+        reader = csv.reader(fh)
+        for row in reader:
+            if not row:
+                continue
+            # consider first two columns as username,password
+            if len(row) < 2:
+                # line doesn't contain a password - skip or handle differently
+                continue
+            username = row[0].strip()
+            password = row[1].strip()
+            yield username, password
+
+
+def main(input_file: str, output_file: Optional[str] = None):
+    in_path = Path(input_file)
+    if not in_path.exists():
+        print(f"Input file '{input_file}' does not exist.")
+        return
+
+    out_fh = None
+    if output_file:
+        out_fh = open(output_file, "w", encoding="utf-8")
+        out_fh.write("username,password_pwned_count\n")
+
+    session = requests.Session()
+
+    # iterate and check each password
+    for idx, (username, password) in enumerate(read_credentials_file(in_path), start=1):
+        # Don't print or log the plaintext password in real logs. We're only demonstrating here.
+        # Use try/except to handle HTTP errors and implement simple backoff on 429.
+        retry = 0
+        while True:
+            try:
+                count = check_password(password, session)
+                break
+            except requests.HTTPError as e:
+                status = getattr(e.response, "status_code", None)
+                if status == 429 and retry < 5:
+                    # Too Many Requests: back off and retry
+                    wait = (2 ** retry) * REQUEST_DELAY
+                    print(f"[{idx}] Received 429 - backing off {wait:.1f}s and retrying...")
+                    time.sleep(wait)
+                    retry += 1
+                    continue
+                else:
+                    # Other HTTP error - show message and set count = -1 meaning "error"
+                    print(f"[{idx}] HTTP error checking password for {username}: {e}")
+                    count = -1
+                    break
+            except requests.RequestException as e:
+                print(f"[{idx}] Network error checking password for {username}: {e}")
+                count = -1
+                break
+
+        # show result (do not print the raw password)
+        if count is None:
+            count = -1
+        if count > 0:
+            print(f"[{idx}] {username}: password WAS found {count} times in breaches.")
+        elif count == 0:
+            print(f"[{idx}] {username}: password NOT found in HIBP.")
+        else:
+            print(f"[{idx}] {username}: error checking password.")
+
+        if out_fh:
+            out_fh.write(f'{username},{count}\n')
+
+        # Polite pause between requests to avoid rate limiting
+        time.sleep(REQUEST_DELAY)
+
+    if out_fh:
+        out_fh.close()
+        print(f"Results written to {output_file}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python check_pwned_passwords.py credentials.txt [output.csv]")
+    else:
+        infile = sys.argv[1]
+        outfile = sys.argv[2] if len(sys.argv) >= 3 else None
+        main(infile, outfile)
