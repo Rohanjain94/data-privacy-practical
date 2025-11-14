@@ -1,0 +1,36 @@
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+# 1️⃣ Generate RSA keys (private & public)
+private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+public_key = private_key.public_key()
+
+# 2️⃣ The original message/document
+message = b"This is a confidential document."
+
+# 3️⃣ Sender creates a digital signature (signs the document hash)
+signature = private_key.sign(
+    message,
+    padding.PSS(
+        mgf=padding.MGF1(hashes.SHA256()),
+        salt_length=padding.PSS.MAX_LENGTH
+    ),
+    hashes.SHA256()
+)
+
+print("✅ Document digitally signed!")
+
+# 4️⃣ Receiver verifies the signature
+try:
+    public_key.verify(
+        signature,
+        message,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    print("✅ Signature verified — document is authentic and untampered.")
+except Exception as e:
+    print("❌ Signature verification failed!", e)
